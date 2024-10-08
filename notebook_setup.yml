@@ -1,0 +1,262 @@
+---
+# Run with sudo ansible-playbook notebook_setup.yml
+- name: Set up Raspberry Pi bootable device
+  hosts: localhost
+  become: yes
+  vars:
+    bootable_device: /dev/nvme0n1 # Change this to your device path, e.g., /dev/sda, /dev/mmcblk0, etc.
+    os_image_path: /home/USER/raspios_lite_arm64_latest.xz
+    wifi_ssid: "WIFI_SSID"
+    wifi_password: "WIFI_PASSWORD"
+    new_username: "NEW_USERNAME"
+    new_password: "NEW_PASSWORD"
+    country: "US"
+    perform_full_wipe: true
+    fixed_wait_time: 60 # Adjust waiting time if needed
+
+  vars_prompt:
+    - name: confirmation
+      prompt: "Are you sure you want to flash {{ bootable_device }}? All current data on this device will be lost. Type 'yes' to confirm, or 'no' to cancel."
+      private: false
+      default: ""
+
+  pre_tasks:
+    - name: Verify confirmation
+      fail:
+        msg: "Operation cancelled by the user. Playbook execution aborted."
+      when: confirmation != 'yes'
+
+    - name: Check if OS image file exists
+      stat:
+        path: "{{ os_image_path }}"
+      register: os_image_stat
+
+    - name: Fail if OS image doesn't exist
+      fail:
+        msg: "The specified OS image {{ os_image_path }} does not exist."
+      when: not os_image_stat.stat.exists
+
+  tasks:
+    - name: Ensure partitions are unmounted
+      mount:
+        path: "{{ item }}"
+        state: unmounted
+      loop:
+        - /mnt/boot
+        - /mnt/rootfs
+      ignore_errors: yes
+
+    - name: Clear partition table (optional full wipe)
+      command: "dd if=/dev/zero of={{ bootable_device }} bs=512 count=1"
+      when: perform_full_wipe | default(false)
+
+    - name: Install required packages
+      apt:
+        name:
+          - rpi-imager
+          - parted
+        state: present
+        update_cache: yes
+
+    - name: Check if bootable device exists
+      stat:
+        path: "{{ bootable_device }}"
+      register: bootable_device_stat
+
+    - name: Fail if bootable device doesn't exist
+      fail:
+        msg: "The specified bootable device {{ bootable_device }} does not exist."
+      when: not bootable_device_stat.stat.exists
+
+    - name: Determine partition suffix
+      set_fact:
+        partition_suffix: "{{ 'p' if '/dev/mmcblk' in bootable_device or '/dev/loop' in bootable_device or '/dev/nvme' in bootable_device else '' }}"
+
+    - name: Flash new OS to bootable device
+      command: >
+        rpi-imager --cli {{ os_image_path }} {{ bootable_device }} --enable-writing-system-drives
+      register: flash_result
+      failed_when: flash_result.rc != 0
+      changed_when: flash_result.rc == 0
+
+    - name: Wait for system to settle after flashing
+      pause:
+        seconds: "{{ fixed_wait_time }}" # Replaces the dynamic partition detection loop
+
+    - name: Inform kernel of partition table changes
+      command: "partprobe {{ bootable_device }}"
+      ignore_errors: yes
+
+    - name: Ensure partitions are available
+      wait_for:
+        path: "{{ bootable_device }}{{ partition_suffix }}{{ item }}"
+        state: present
+        timeout: 30
+      loop:
+        - "1"
+        - "2"
+      register: wait_result
+      ignore_errors: yes
+
+    - name: Check partition availability results
+      fail:
+        msg: "Partition {{ bootable_device }}{{ partition_suffix }}{{ item.item }} is not available after 30 seconds."
+      when: item.failed
+      loop: "{{ wait_result.results }}"
+
+    - name: Debug partition availability
+      debug:
+        msg: "Partition {{ bootable_device }}{{ partition_suffix }}{{ item.item }} status: {{ item.state }}"
+      loop: "{{ wait_result.results }}"
+
+    - name: Fail if partitions are not available
+      fail:
+        msg: >-
+          Partitions are not available after flashing. Please check the device and try again.
+      when: wait_result is failed
+
+    - name: Create mount points
+      file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - /mnt/boot
+        - /mnt/rootfs
+
+    - name: Mount bootable device partitions
+      mount:
+        path: "{{ item.path }}"
+        src: "{{ item.src }}"
+        fstype: "{{ item.fstype }}"
+        state: mounted
+      loop:
+        - path: /mnt/boot
+          src: "{{ bootable_device }}{{ partition_suffix }}1"
+          fstype: vfat
+        - path: /mnt/rootfs
+          src: "{{ bootable_device }}{{ partition_suffix }}2"
+          fstype: ext4
+
+    # Remaining tasks are unchanged
+    - name: Set up Wi-Fi configuration
+      copy:
+        content: |
+          country="{{ country }}"
+          ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+          update_config=1
+
+          network={
+            ssid="{{ wifi_ssid }}"
+            psk="{{ wifi_password }}"
+          }
+        dest: /mnt/boot/wpa_supplicant.conf
+
+    - name: Enable SSH
+      file:
+        path: /mnt/boot/ssh
+        state: touch
+
+    - name: Ensure SSH password authentication is enabled
+      lineinfile:
+        path: /mnt/rootfs/etc/ssh/sshd_config
+        regexp: "^#?PasswordAuthentication"
+        line: PasswordAuthentication yes
+
+    - name: Disable SSH root login
+      lineinfile:
+        path: /mnt/rootfs/etc/ssh/sshd_config
+        regexp: "^#?PermitRootLogin"
+        line: PermitRootLogin no
+
+    - name: Check if user exists
+      command: "chroot /mnt/rootfs /bin/bash -c 'id -u {{ new_username }}'"
+      register: user_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Remove existing user if present
+      command: "chroot /mnt/rootfs /bin/bash -c 'userdel -r {{ new_username }}'"
+      when: user_exists.rc == 0
+
+    - name: Create user on the new system
+      shell: |
+        chroot /mnt/rootfs /bin/bash -c "
+        useradd -m -s /bin/bash {{ new_username }} &&
+        echo '{{ new_username }}:{{ new_password }}' | chpasswd &&
+        usermod -aG sudo {{ new_username }}
+        "
+
+    - name: Allow passwordless sudo for the new user
+      copy:
+        content: "{{ new_username }} ALL=(ALL) NOPASSWD:ALL"
+        dest: "/mnt/rootfs/etc/sudoers.d/{{ new_username }}"
+        mode: "0440"
+
+    - name: Enable SSH service on the new system
+      shell: |
+        chroot /mnt/rootfs /bin/bash -c "
+        systemctl enable ssh
+        "
+
+    - name: Configure network on the new system
+      copy:
+        content: |
+          allow-hotplug eth0
+          iface eth0 inet dhcp
+          allow-hotplug wlan0
+          iface wlan0 inet dhcp
+            wpa-conf /etc/wpa_supplicant/wpa_supplicant.conf
+        dest: /mnt/rootfs/etc/network/interfaces
+
+    - name: Set hostname
+      copy:
+        content: raspberrypi
+        dest: /mnt/rootfs/etc/hostname
+
+    - name: Configure hosts file
+      copy:
+        content: |
+          127.0.0.1 localhost
+          127.0.1.1 raspberrypi
+
+          # The following lines are desirable for IPv6 capable hosts
+          ::1     localhost ip6-localhost ip6-loopback
+          ff02::1 ip6-allnodes
+          ff02::2 ip6-allrouters
+        dest: /mnt/rootfs/etc/hosts
+
+    - name: Set locale
+      copy:
+        content: en_US.UTF-8 UTF-8
+        dest: /mnt/rootfs/etc/locale.gen
+
+    - name: Generate locale
+      command: chroot /mnt/rootfs /bin/bash -c 'locale-gen'
+
+    - name: Set default locale
+      copy:
+        content: LANG=en_US.UTF-8
+        dest: /mnt/rootfs/etc/default/locale
+
+    - name: Set timezone to Eastern Time (US)
+      command: >-
+        chroot /mnt/rootfs /bin/bash -c 'ln -sf /usr/share/zoneinfo/America/New_York /etc/localtime'
+
+    - name: Unmount partitions
+      mount:
+        path: "{{ item }}"
+        state: unmounted
+      loop:
+        - /mnt/boot
+        - /mnt/rootfs
+
+    - name: Final sync before reboot
+      command: sync
+
+    - name: Notify about success
+      debug:
+        msg: >
+          Raspberry Pi bootable device created successfully with OS image {{ os_image_path }} on {{ bootable_device }}.
+    - name: Remind user to safely remove device
+      debug:
+        msg: "Setup complete. You can now safely remove {{ bootable_device }} and boot your Raspberry Pi."

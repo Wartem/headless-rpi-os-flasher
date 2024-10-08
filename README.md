@@ -115,9 +115,13 @@ sudo apt install ansible
 https://github.com/Wartem/headless-rpi-os-flasher
 cd headless-rpi-os-flasher
 ```
-2. Open the notebook_setup.yml file in your preferred text editor.
+2. Edit the notebook_setup.yml file with
+```bash
+sudo nano notebook_setup.yml
+```
+or in your preferred text editor.
 
-3. Modify the following variables in the vars section to match your setup:
+6. Modify the following variables in the vars section to match your setup:
 
 ```yml
 vars:

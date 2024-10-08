@@ -112,7 +112,7 @@ sudo apt install ansible
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/user/headless-rpi-os-flasher.git
+https://github.com/Wartem/headless-rpi-os-flasher
 cd headless-rpi-os-flasher
 ```
 2. Open the notebook_setup.yml file in your preferred text editor.

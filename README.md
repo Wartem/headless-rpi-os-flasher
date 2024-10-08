@@ -1,3 +1,19 @@
+![Raspberry Pi](https://img.shields.io/badge/raspberrypi-OS-informational?logo=raspberry-pi&color=red)
+![Linux](https://img.shields.io/badge/Linux-Support-blue?logo=linux&color=blue)
+![SSH](https://img.shields.io/badge/SSH-remote%20access-informational?logo=OpenSSH&color=green)
+![WiFi](https://img.shields.io/badge/WiFi-Headless%20Setup-yellowgreen?logo=wifi&color=yellowgreen)
+![Ansible](https://img.shields.io/badge/Ansible-Automation-orange?logo=ansible&color=ff6600)
+![GitHub](https://img.shields.io/badge/GitHub-Repository-informational?logo=github)
+![CLI](https://img.shields.io/badge/CLI-Support-informational?logo=windows-terminal&color=yellow)
+![Shell](https://img.shields.io/badge/Shell-Bash-green?logo=gnubash&color=lightgrey)
+
+![Python](https://img.shields.io/badge/Python-3.x-yellow?logo=python&logoColor=white)
+![YAML](https://img.shields.io/badge/YAML-configuration-blue?logo=yaml&logoColor=white)
+![Markdown](https://img.shields.io/badge/Markdown-Documentation-blue?logo=markdown)
+
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/Status-Experimental-yellow)
+
 # Headless Raspberry Pi OS Flasher
 This repository provides a headless method for flashing Raspberry Pi OS onto another bootable device (such as an SD-card, SSD or USB drive) **while the Raspberry Pi is running from another connected device**. The entire process is managed remotely from another computer, such as your PC, via SSH, allowing you to configure and flash the OS without needing direct access to the Raspberry Pi's peripherals. Ideal for users without direct access to the bootable device, this guide automates the flashing process and configures essential settings like Wi-Fi and SSH, ensuring a seamless setup for headless operation. 
 This approach is useful when you don't have direct access to the bootable device from your main computer.
